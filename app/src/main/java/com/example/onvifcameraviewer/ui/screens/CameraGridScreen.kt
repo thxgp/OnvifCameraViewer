@@ -41,6 +41,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.onvifcameraviewer.R
+import com.example.onvifcameraviewer.domain.model.ConnectionState
 import com.example.onvifcameraviewer.ui.components.AuthDialog
 import com.example.onvifcameraviewer.ui.components.CameraCell
 import com.example.onvifcameraviewer.ui.components.ManualCameraDialog
@@ -161,7 +162,7 @@ fun CameraGridScreen(
                                 // 3. Connection failed (ERROR state) - allows retry!
                                 val isManual = camera.device.serviceUrl.isEmpty()
                                 val needsAuth = camera.credentials == null
-                                val hasError = camera.connectionState == com.example.onvifcameraviewer.ui.viewmodel.ConnectionState.ERROR
+                                val hasError = camera.connectionState == ConnectionState.ERROR
                                 
                                 if ((isManual && !hasError) || needsAuth || hasError) {
                                     viewModel.requestAuthentication(camera.id)

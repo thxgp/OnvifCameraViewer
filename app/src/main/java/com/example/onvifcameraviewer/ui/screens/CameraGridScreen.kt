@@ -13,12 +13,14 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -41,6 +43,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.onvifcameraviewer.R
 import com.example.onvifcameraviewer.ui.components.AuthDialog
 import com.example.onvifcameraviewer.ui.components.CameraCell
+import com.example.onvifcameraviewer.ui.components.ManualCameraDialog
 import com.example.onvifcameraviewer.ui.viewmodel.CameraViewModel
 
 /**
@@ -78,34 +81,52 @@ fun CameraGridScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { viewModel.startDiscovery() },
-                icon = {
-                    if (uiState.isScanning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = if (uiState.cameras.isEmpty()) 
-                                Icons.Filled.Search 
-                            else 
-                                Icons.Filled.Refresh,
-                            contentDescription = null
-                        )
-                    }
-                },
-                text = {
-                    Text(
-                        text = if (uiState.isScanning) 
-                            stringResource(R.string.scanning) 
-                        else 
-                            stringResource(R.string.discover_cameras)
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                // Manual add camera FAB
+                FloatingActionButton(
+                    onClick = { viewModel.showManualAddDialog() },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = stringResource(R.string.add_camera_manually)
                     )
-                },
-                expanded = !uiState.isScanning
-            )
+                }
+                
+                // Discover cameras FAB
+                ExtendedFloatingActionButton(
+                    onClick = { viewModel.startDiscovery() },
+                    icon = {
+                        if (uiState.isScanning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (uiState.cameras.isEmpty()) 
+                                    Icons.Filled.Search 
+                                else 
+                                    Icons.Filled.Refresh,
+                                contentDescription = null
+                            )
+                        }
+                    },
+                    text = {
+                        Text(
+                            text = if (uiState.isScanning) 
+                                stringResource(R.string.scanning) 
+                            else 
+                                stringResource(R.string.discover_cameras)
+                        )
+                    },
+                    expanded = !uiState.isScanning
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
@@ -158,6 +179,21 @@ fun CameraGridScreen(
                 }
             )
         }
+    }
+    
+    // Manual camera dialog
+    if (uiState.showManualAddDialog) {
+        ManualCameraDialog(
+            onDismiss = { viewModel.dismissManualAddDialog() },
+            onAdd = { config ->
+                viewModel.addManualCamera(
+                    name = config.name,
+                    streamUrl = config.streamUrl,
+                    username = config.username,
+                    password = config.password
+                )
+            }
+        )
     }
 }
 

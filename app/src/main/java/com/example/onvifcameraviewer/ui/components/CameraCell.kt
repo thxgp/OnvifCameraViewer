@@ -174,7 +174,7 @@ fun CameraCell(
 }
 
 @Composable
-private fun DisconnectedOverlay(cameraName: String, onClick: () -> Unit) {
+private fun DisconnectedOverlay(@Suppress("UNUSED_PARAMETER") cameraName: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()

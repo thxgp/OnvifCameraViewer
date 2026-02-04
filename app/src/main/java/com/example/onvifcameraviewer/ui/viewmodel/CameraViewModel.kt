@@ -23,6 +23,7 @@ data class MainScreenState(
     val cameras: List<CameraUiState> = emptyList(),
     val isScanning: Boolean = false,
     val showAuthDialog: Boolean = false,
+    val showManualAddDialog: Boolean = false,
     val selectedCameraId: String? = null,
     val errorMessage: String? = null
 )
@@ -42,20 +43,25 @@ class CameraViewModel @Inject constructor(
     
     /**
      * Starts scanning for ONVIF cameras on the network.
+     * Preserves manually added cameras during discovery.
      */
     fun startDiscovery() {
         if (_uiState.value.isScanning) return
         
-        _uiState.update { it.copy(isScanning = true, cameras = emptyList()) }
+        // Keep manually added cameras (those with empty serviceUrl)
+        val manualCameras = _uiState.value.cameras.filter { it.device.serviceUrl.isEmpty() }
+        _uiState.update { it.copy(isScanning = true, cameras = manualCameras) }
         
         viewModelScope.launch {
             try {
                 cameraRepository.discoverCameras().collect { device ->
                     addDiscoveredCamera(device)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Normal cancellation, don't show error
             } catch (e: Exception) {
                 _uiState.update { 
-                    it.copy(errorMessage = "Discovery failed: ${e.message}") 
+                    it.copy(errorMessage = "Discovery failed: ${e.message ?: "Unknown error"}") 
                 }
             } finally {
                 _uiState.update { it.copy(isScanning = false) }
@@ -163,6 +169,60 @@ class CameraViewModel @Inject constructor(
                 cameras = state.cameras.map { camera ->
                     if (camera.id == cameraId) update(camera) else camera
                 }
+            )
+        }
+    }
+    
+    /**
+     * Opens the manual camera add dialog.
+     */
+    fun showManualAddDialog() {
+        _uiState.update { it.copy(showManualAddDialog = true) }
+    }
+    
+    /**
+     * Dismisses the manual camera add dialog.
+     */
+    fun dismissManualAddDialog() {
+        _uiState.update { it.copy(showManualAddDialog = false) }
+    }
+    
+    /**
+     * Adds a camera manually with a direct stream URL.
+     * Used for non-ONVIF cameras like IP Webcam.
+     */
+    fun addManualCamera(name: String, streamUrl: String, username: String, password: String) {
+        val id = "manual_${System.currentTimeMillis()}"
+        val ipAddress = OnvifDevice.extractIpFromUrl(streamUrl).ifEmpty { "Unknown" }
+        
+        // Create a placeholder OnvifDevice for manual cameras
+        val device = OnvifDevice(
+            id = id,
+            name = name,
+            manufacturer = "Manual",
+            model = "",
+            serviceUrl = "",  // No ONVIF service for manual cameras
+            ipAddress = ipAddress
+        )
+        
+        val credentials = if (username.isNotBlank()) {
+            Credentials(username, password)
+        } else {
+            null
+        }
+        
+        val cameraState = CameraUiState(
+            id = id,
+            device = device,
+            credentials = credentials,
+            streamUri = streamUrl,
+            connectionState = ConnectionState.STREAMING
+        )
+        
+        _uiState.update { state ->
+            state.copy(
+                cameras = state.cameras + cameraState,
+                showManualAddDialog = false
             )
         }
     }

@@ -38,8 +38,12 @@ class OnvifDiscoveryService @Inject constructor(
         private const val BUFFER_SIZE = 65535
     }
     
-    private val wifiManager: WifiManager by lazy {
-        context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private val wifiManager: WifiManager? by lazy {
+        try {
+            context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        } catch (e: Exception) {
+            null
+        }
     }
     
     /**
@@ -50,18 +54,28 @@ class OnvifDiscoveryService @Inject constructor(
      * @return Flow of discovered OnvifDevice objects
      */
     fun discoverDevices(timeoutMs: Long = DISCOVERY_TIMEOUT_MS): Flow<OnvifDevice> = flow {
-        val multicastLock = wifiManager.createMulticastLock("onvif_discovery")
-        multicastLock.setReferenceCounted(true)
+        val manager = wifiManager
+        var multicastLock: WifiManager.MulticastLock? = null
         
         val discoveredDevices = mutableSetOf<String>()
         var socket: DatagramSocket? = null
         
         try {
-            multicastLock.acquire()
+            // Try to acquire multicast lock if WiFi is available
+            multicastLock = try {
+                manager?.createMulticastLock("onvif_discovery")?.apply {
+                    setReferenceCounted(true)
+                    acquire()
+                }
+            } catch (e: Exception) {
+                // Multicast lock failed, continue without it
+                null
+            }
             
             socket = DatagramSocket().apply {
                 broadcast = true
                 soTimeout = SOCKET_TIMEOUT_MS
+                reuseAddress = true
             }
             
             // Send probe message
@@ -85,7 +99,7 @@ class OnvifDiscoveryService @Inject constructor(
                         socket.receive(inPacket)
                         val response = String(inPacket.data, 0, inPacket.length)
                         
-                        parseProbeMatch(response, inPacket.address.hostAddress ?: "")?.let { device ->
+                        parseProbeMatch(response, inPacket.address?.hostAddress ?: "")?.let { device ->
                             if (device.serviceUrl !in discoveredDevices) {
                                 discoveredDevices.add(device.serviceUrl)
                                 emit(device)
@@ -96,12 +110,23 @@ class OnvifDiscoveryService @Inject constructor(
                     }
                 }
             }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            // Normal timeout - discovery complete
         } catch (e: Exception) {
-            // Timeout or other exception - discovery complete
+            // Log error but don't crash
+            android.util.Log.e("OnvifDiscovery", "Discovery error: ${e.message}", e)
         } finally {
-            socket?.close()
-            if (multicastLock.isHeld) {
-                multicastLock.release()
+            try {
+                socket?.close()
+            } catch (e: Exception) {
+                // Ignore close errors
+            }
+            try {
+                if (multicastLock?.isHeld == true) {
+                    multicastLock.release()
+                }
+            } catch (e: Exception) {
+                // Ignore release errors
             }
         }
     }.flowOn(Dispatchers.IO)

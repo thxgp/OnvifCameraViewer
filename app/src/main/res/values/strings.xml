@@ -18,4 +18,14 @@
     <string name="authentication_required">Authentication Required</string>
     <string name="connection_failed">Connection failed</string>
     <string name="stream_error">Stream error</string>
+    
+    <!-- Manual Camera Dialog -->
+    <string name="add_camera_manually">Add Camera Manually</string>
+    <string name="manual_camera_hint">Enter the stream URL for non-ONVIF cameras like IP Webcam</string>
+    <string name="camera_name">Camera Name</string>
+    <string name="stream_url">Stream URL</string>
+    <string name="stream_url_hint">RTSP or HTTP URL (e.g., rtsp://ip:554/stream)</string>
+    <string name="optional_credentials">Optional Credentials</string>
+    <string name="add_camera">Add Camera</string>
+    <string name="manual_camera">Manual</string>
 </resources>

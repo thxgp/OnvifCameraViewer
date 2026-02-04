@@ -140,7 +140,7 @@ class OnvifMediaService @Inject constructor() {
     private fun buildGetStreamUriRequest(
         auth: AuthComponents,
         profileToken: String,
-        transport: String
+        @Suppress("UNUSED_PARAMETER") transport: String
     ): String {
         return """<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"

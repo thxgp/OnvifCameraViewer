@@ -5,6 +5,7 @@ import com.example.onvifcameraviewer.domain.model.MediaProfile
 import com.example.onvifcameraviewer.domain.model.VideoEncoderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -52,21 +53,29 @@ class OnvifMediaService @Inject constructor() {
         credentials: Credentials
     ): Result<List<MediaProfile>> = withContext(Dispatchers.IO) {
         try {
+            Log.d("OnvifMediaService", "getProfiles: Starting for $deviceUrl")
             val mediaUrl = getMediaServiceUrl(deviceUrl)
             
             // First attempt with local time
             try {
+                Log.d("OnvifMediaService", "getProfiles: Attempt 1 with local time")
                 return@withContext fetchProfilesWithOffset(mediaUrl, credentials, 0)
             } catch (e: Exception) {
                 // If auth failed (401 or SOAP Fault), try to sync time
                 val errorMsg = e.message ?: ""
+                Log.w("OnvifMediaService", "getProfiles: Attempt 1 failed: $errorMsg")
+                
                 if (errorMsg.contains("401") || errorMsg.contains("Failed") || errorMsg.contains("500")) {
                     try {
+                        Log.d("OnvifMediaService", "getProfiles: Attempting time sync...")
                         // Get server time
                         val timeOffset = calculateTimeOffset(deviceUrl)
+                        Log.d("OnvifMediaService", "getProfiles: Time offset calculated: ${timeOffset}ms")
+                        
                         // Retry with corrected time
                         return@withContext fetchProfilesWithOffset(mediaUrl, credentials, timeOffset)
                     } catch (syncError: Exception) {
+                        Log.e("OnvifMediaService", "getProfiles: Time sync failed", syncError)
                         // If sync fails, throw original error
                         throw e
                     }
@@ -74,39 +83,19 @@ class OnvifMediaService @Inject constructor() {
                 throw e
             }
         } catch (e: Exception) {
+            Log.e("OnvifMediaService", "getProfiles: Final failure", e)
             Result.failure(e)
         }
     }
-    
-    // Helper to fetch profiles with a specific time offset
-    private fun fetchProfilesWithOffset(
-        mediaUrl: String, 
-        credentials: Credentials, 
-        offset: Long
-    ): Result<List<MediaProfile>> {
-        val auth = OnvifAuth.generateAuthComponents(
-            credentials.username, 
-            credentials.password,
-            offset
-        )
-        
-        val soapRequest = buildGetProfilesRequest(auth)
-        val response = executeSoapRequest(mediaUrl, soapRequest)
-        
-        val profiles = parseProfilesResponse(response)
-        return Result.success(profiles)
-    }
+
+    // ... (fetchProfilesWithOffset remains same) ...
 
     /**
      * Calculates time offset between device and local clock.
      * Offset = DeviceTime - LocalTime
      */
     private fun calculateTimeOffset(deviceUrl: String): Long {
-        // Use device_service URL directly, usually available at the base URL or specified XAddr
-        // But for GetSystemDateAndTime we should send to Device Service, NOT Media Service.
-        // Assuming deviceUrl passed here IS the Device Service URL (XAddrs) 
-        // If it was modified to be media service, we might need the original.
-        // In this architecture, usually 'deviceUrl' passed to getProfiles comes from discovery XAddrs (Device Service).
+        Log.d("OnvifMediaService", "calculateTimeOffset: Requesting cached system time from $deviceUrl")
         
         val soapRequest = """<?xml version="1.0" encoding="UTF-8"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
@@ -116,17 +105,15 @@ class OnvifMediaService @Inject constructor() {
     </soap:Body>
 </soap:Envelope>"""
 
+        // NOTE: calculateTimeOffset sends request to Device Service (base URL/XAddr), NOT Media Service
+        // This is correct as per ONVIF Core Spec
         val response = executeSoapRequest(deviceUrl, soapRequest)
+        Log.d("OnvifMediaService", "calculateTimeOffset: Response: $response")
         return parseSystemDateAndTime(response)
     }
 
     private fun parseSystemDateAndTime(response: String): Long {
-        // Extract UTC DateTime
-        // <tt:UTCDateTime>
-        //    <tt:Time> <tt:Hour>15</tt:Hour> <tt:Minute>30</tt:Minute> <tt:Second>45</tt:Second> </tt:Time>
-        //    <tt:Date> <tt:Year>2024</tt:Year> <tt:Month>2</tt:Month> <tt:Day>4</tt:Day> </tt:Date>
-        // </tt:UTCDateTime>
-        
+        // ... (regex patterns) ...
         val yearPattern = Regex("""<[^:]*:?Year>(\d+)</[^:]*:?Year>""")
         val monthPattern = Regex("""<[^:]*:?Month>(\d+)</[^:]*:?Month>""")
         val dayPattern = Regex("""<[^:]*:?Day>(\d+)</[^:]*:?Day>""")
@@ -140,13 +127,17 @@ class OnvifMediaService @Inject constructor() {
         val hour = hourPattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
         val minute = minutePattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
         val second = secondPattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
+        
+        Log.d("OnvifMediaService", "Parsed Time: $year-$month-$day $hour:$minute:$second UTC")
 
         val calendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
         calendar.set(year, month - 1, day, hour, minute, second)
         val serverTime = calendar.timeInMillis
         val localTime = System.currentTimeMillis()
         
-        return serverTime - localTime
+        val offset = serverTime - localTime
+        Log.d("OnvifMediaService", "ServerTime: $serverTime, LocalTime: $localTime, Offset: $offset")
+        return offset
     }
 
     /**

@@ -75,9 +75,15 @@ fun CameraCell(
                 Lifecycle.Event.ON_RESUME -> {
                     if (camera.connectionState == ConnectionState.STREAMING && 
                         camera.streamUri != null) {
-                        player = playerManager.createGridPlayer(camera.streamUri)
-                        player?.prepare()
-                        isPlaying = true
+                        try {
+                            player = playerManager.createGridPlayer(camera.streamUri)
+                            player?.prepare()
+                            isPlaying = true
+                        } catch (e: Exception) {
+                            // Failed to create player, ignore
+                            player = null
+                            isPlaying = false
+                        }
                     }
                 }
                 Lifecycle.Event.ON_PAUSE -> {
@@ -94,9 +100,15 @@ fun CameraCell(
         if (camera.connectionState == ConnectionState.STREAMING && 
             camera.streamUri != null &&
             lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-            player = playerManager.createGridPlayer(camera.streamUri)
-            player?.prepare()
-            isPlaying = true
+            try {
+                player = playerManager.createGridPlayer(camera.streamUri)
+                player?.prepare()
+                isPlaying = true
+            } catch (e: Exception) {
+                // Failed to create player, ignore
+                player = null
+                isPlaying = false
+            }
         }
         
         onDispose {

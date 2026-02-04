@@ -2,13 +2,15 @@ package com.example.onvifcameraviewer.data.discovery
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.util.Log
 import com.example.onvifcameraviewer.domain.model.OnvifDevice
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.isActive
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -16,6 +18,7 @@ import java.net.SocketTimeoutException
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.coroutineContext
 
 /**
  * Service for discovering ONVIF-compliant devices on the local network
@@ -31,19 +34,12 @@ class OnvifDiscoveryService @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     companion object {
+        private const val TAG = "OnvifDiscovery"
         private const val WS_DISCOVERY_ADDRESS = "239.255.255.250"
         private const val WS_DISCOVERY_PORT = 3702
-        private const val SOCKET_TIMEOUT_MS = 3000
+        private const val SOCKET_TIMEOUT_MS = 2000
         private const val DISCOVERY_TIMEOUT_MS = 8000L
         private const val BUFFER_SIZE = 65535
-    }
-    
-    private val wifiManager: WifiManager? by lazy {
-        try {
-            context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        } catch (e: Exception) {
-            null
-        }
     }
     
     /**
@@ -54,24 +50,17 @@ class OnvifDiscoveryService @Inject constructor(
      * @return Flow of discovered OnvifDevice objects
      */
     fun discoverDevices(timeoutMs: Long = DISCOVERY_TIMEOUT_MS): Flow<OnvifDevice> = flow {
-        val manager = wifiManager
-        var multicastLock: WifiManager.MulticastLock? = null
+        Log.d(TAG, "Starting ONVIF discovery...")
         
         val discoveredDevices = mutableSetOf<String>()
         var socket: DatagramSocket? = null
+        var multicastLock: WifiManager.MulticastLock? = null
         
         try {
-            // Try to acquire multicast lock if WiFi is available
-            multicastLock = try {
-                manager?.createMulticastLock("onvif_discovery")?.apply {
-                    setReferenceCounted(true)
-                    acquire()
-                }
-            } catch (e: Exception) {
-                // Multicast lock failed, continue without it
-                null
-            }
+            // Try to acquire multicast lock
+            multicastLock = acquireMulticastLock()
             
+            // Create UDP socket
             socket = DatagramSocket().apply {
                 broadcast = true
                 soTimeout = SOCKET_TIMEOUT_MS
@@ -87,49 +76,87 @@ class OnvifDiscoveryService @Inject constructor(
                 multicastAddress,
                 WS_DISCOVERY_PORT
             )
+            
+            Log.d(TAG, "Sending WS-Discovery probe...")
             socket.send(outPacket)
             
-            // Listen for responses
+            // Listen for responses with timeout
             val buffer = ByteArray(BUFFER_SIZE)
             val inPacket = DatagramPacket(buffer, buffer.size)
+            val startTime = System.currentTimeMillis()
             
-            withTimeout(timeoutMs) {
-                while (true) {
-                    try {
-                        socket.receive(inPacket)
-                        val response = String(inPacket.data, 0, inPacket.length)
-                        
-                        parseProbeMatch(response, inPacket.address?.hostAddress ?: "")?.let { device ->
-                            if (device.serviceUrl !in discoveredDevices) {
-                                discoveredDevices.add(device.serviceUrl)
-                                emit(device)
-                            }
+            while (coroutineContext.isActive && 
+                   (System.currentTimeMillis() - startTime) < timeoutMs) {
+                try {
+                    socket.receive(inPacket)
+                    val response = String(inPacket.data, 0, inPacket.length)
+                    val senderIp = inPacket.address?.hostAddress ?: ""
+                    
+                    parseProbeMatch(response, senderIp)?.let { device ->
+                        if (device.serviceUrl !in discoveredDevices) {
+                            Log.d(TAG, "Discovered device: ${device.name} at ${device.ipAddress}")
+                            discoveredDevices.add(device.serviceUrl)
+                            emit(device)
                         }
-                    } catch (e: SocketTimeoutException) {
-                        // Continue listening until timeout
                     }
+                } catch (e: SocketTimeoutException) {
+                    // Normal timeout, continue listening
                 }
             }
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            // Normal timeout - discovery complete
+            
+            Log.d(TAG, "Discovery complete. Found ${discoveredDevices.size} devices.")
+            
         } catch (e: Exception) {
-            // Log error but don't crash
-            android.util.Log.e("OnvifDiscovery", "Discovery error: ${e.message}", e)
+            Log.e(TAG, "Discovery error: ${e.message}", e)
+            // Don't rethrow - just end the flow gracefully
         } finally {
-            try {
-                socket?.close()
-            } catch (e: Exception) {
-                // Ignore close errors
-            }
-            try {
-                if (multicastLock?.isHeld == true) {
-                    multicastLock.release()
-                }
-            } catch (e: Exception) {
-                // Ignore release errors
-            }
+            closeSocketSafely(socket)
+            releaseMulticastLockSafely(multicastLock)
         }
     }.flowOn(Dispatchers.IO)
+    
+    /**
+     * Safely acquires a multicast lock if WiFi is available.
+     */
+    private fun acquireMulticastLock(): WifiManager.MulticastLock? {
+        return try {
+            val wifiManager = context.applicationContext
+                .getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifiManager?.createMulticastLock("onvif_discovery")?.apply {
+                setReferenceCounted(true)
+                acquire()
+                Log.d(TAG, "Multicast lock acquired")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire multicast lock: ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * Safely closes the UDP socket.
+     */
+    private fun closeSocketSafely(socket: DatagramSocket?) {
+        try {
+            socket?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing socket: ${e.message}")
+        }
+    }
+    
+    /**
+     * Safely releases the multicast lock.
+     */
+    private fun releaseMulticastLockSafely(lock: WifiManager.MulticastLock?) {
+        try {
+            if (lock?.isHeld == true) {
+                lock.release()
+                Log.d(TAG, "Multicast lock released")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing multicast lock: ${e.message}")
+        }
+    }
     
     /**
      * Builds the WS-Discovery SOAP Probe message.
@@ -168,43 +195,48 @@ class OnvifDiscoveryService @Inject constructor(
         // Must be a ProbeMatch response
         if (!response.contains("ProbeMatch")) return null
         
-        // Extract XAddrs (service URL)
-        val xAddrsRegex = Regex("""<[^:]*:?XAddrs>([^<]+)</[^:]*:?XAddrs>""")
-        val xAddrsMatch = xAddrsRegex.find(response) ?: return null
-        val xAddrs = xAddrsMatch.groupValues[1].trim()
-        
-        // Take first URL if multiple are provided (space-separated)
-        val serviceUrl = xAddrs.split(" ").firstOrNull()?.trim() ?: return null
-        
-        // Extract IP from service URL
-        val ipAddress = OnvifDevice.extractIpFromUrl(serviceUrl).ifEmpty { senderIp }
-        
-        // Extract endpoint reference (acts as unique ID)
-        val addressRegex = Regex("""<[^:]*:?Address>([^<]+)</[^:]*:?Address>""")
-        val addressMatch = addressRegex.find(response)
-        val endpointRef = addressMatch?.groupValues?.get(1)?.trim() ?: serviceUrl
-        
-        // Extract scopes for device info
-        val scopesRegex = Regex("""<[^:]*:?Scopes>([^<]+)</[^:]*:?Scopes>""")
-        val scopesMatch = scopesRegex.find(response)
-        val scopes = scopesMatch?.groupValues?.get(1) ?: ""
-        
-        // Parse scopes for manufacturer, model, name
-        val manufacturer = extractScopeValue(scopes, "hardware") 
-            ?: extractScopeValue(scopes, "mfr") 
-            ?: ""
-        val model = extractScopeValue(scopes, "name") ?: ""
-        val name = extractScopeValue(scopes, "location") 
-            ?: model.ifEmpty { "Camera @ $ipAddress" }
-        
-        return OnvifDevice(
-            id = endpointRef.hashCode().toString(),
-            name = name,
-            manufacturer = manufacturer,
-            model = model,
-            serviceUrl = serviceUrl,
-            ipAddress = ipAddress
-        )
+        return try {
+            // Extract XAddrs (service URL)
+            val xAddrsRegex = Regex("""<[^:]*:?XAddrs>([^<]+)</[^:]*:?XAddrs>""")
+            val xAddrsMatch = xAddrsRegex.find(response) ?: return null
+            val xAddrs = xAddrsMatch.groupValues[1].trim()
+            
+            // Take first URL if multiple are provided (space-separated)
+            val serviceUrl = xAddrs.split(" ").firstOrNull()?.trim() ?: return null
+            
+            // Extract IP from service URL
+            val ipAddress = OnvifDevice.extractIpFromUrl(serviceUrl).ifEmpty { senderIp }
+            
+            // Extract endpoint reference (acts as unique ID)
+            val addressRegex = Regex("""<[^:]*:?Address>([^<]+)</[^:]*:?Address>""")
+            val addressMatch = addressRegex.find(response)
+            val endpointRef = addressMatch?.groupValues?.get(1)?.trim() ?: serviceUrl
+            
+            // Extract scopes for device info
+            val scopesRegex = Regex("""<[^:]*:?Scopes>([^<]+)</[^:]*:?Scopes>""")
+            val scopesMatch = scopesRegex.find(response)
+            val scopes = scopesMatch?.groupValues?.get(1) ?: ""
+            
+            // Parse scopes for manufacturer, model, name
+            val manufacturer = extractScopeValue(scopes, "hardware") 
+                ?: extractScopeValue(scopes, "mfr") 
+                ?: ""
+            val model = extractScopeValue(scopes, "name") ?: ""
+            val name = extractScopeValue(scopes, "location") 
+                ?: model.ifEmpty { "Camera @ $ipAddress" }
+            
+            OnvifDevice(
+                id = endpointRef.hashCode().toString(),
+                name = name,
+                manufacturer = manufacturer,
+                model = model,
+                serviceUrl = serviceUrl,
+                ipAddress = ipAddress
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse probe match: ${e.message}")
+            null
+        }
     }
     
     /**
@@ -212,9 +244,13 @@ class OnvifDiscoveryService @Inject constructor(
      * Scopes format: "onvif://www.onvif.org/type/value"
      */
     private fun extractScopeValue(scopes: String, key: String): String? {
-        val regex = Regex("""onvif://www\.onvif\.org/$key/([^\s]+)""", RegexOption.IGNORE_CASE)
-        return regex.find(scopes)?.groupValues?.get(1)?.let { 
-            java.net.URLDecoder.decode(it, "UTF-8") 
+        return try {
+            val regex = Regex("""onvif://www\.onvif\.org/$key/([^\s]+)""", RegexOption.IGNORE_CASE)
+            regex.find(scopes)?.groupValues?.get(1)?.let { 
+                java.net.URLDecoder.decode(it, "UTF-8") 
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 }

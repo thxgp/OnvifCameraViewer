@@ -155,7 +155,9 @@ fun CameraGridScreen(
                             camera = camera,
                             playerManager = viewModel.playerManager,
                             onTap = {
-                                if (camera.credentials == null) {
+                                // Only show auth dialog for ONVIF cameras that need credentials
+                                // Manual cameras (empty serviceUrl) already have streamUri set
+                                if (camera.credentials == null && camera.device.serviceUrl.isNotEmpty()) {
                                     viewModel.requestAuthentication(camera.id)
                                 }
                             },

@@ -7,12 +7,12 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.datasource.DefaultHttpDataSource
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -56,10 +56,8 @@ class RtspPlayerManager @Inject constructor(
                 .createMediaSource(mediaItem)
         } else {
             // HTTP stream (MJPEG, HLS, etc.)
-            val dataSourceFactory = DefaultHttpDataSource.Factory()
-                .setConnectTimeoutMs(10000)
-                .setReadTimeoutMs(10000)
-                .setAllowCrossProtocolRedirects(true)
+            // Use DefaultDataSource to support file, asset, http, etc.
+            val dataSourceFactory = DefaultDataSource.Factory(context)
             
             ProgressiveMediaSource.Factory(dataSourceFactory)
                 .createMediaSource(mediaItem)
@@ -80,38 +78,43 @@ class RtspPlayerManager @Inject constructor(
     ): ExoPlayer {
         Log.d(TAG, "Creating player for: $streamUri")
         
-        // Low-latency load control configuration
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                MIN_BUFFER_MS,
-                MAX_BUFFER_MS,
-                BUFFER_FOR_PLAYBACK_MS,
-                BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
-            )
-            .build()
-        
-        val mediaSource = createMediaSource(streamUri)
-        
-        val player = ExoPlayer.Builder(context)
-            .setLoadControl(loadControl)
-            .build()
-            .apply {
-                setMediaSource(mediaSource)
-                playWhenReady = true
-                repeatMode = Player.REPEAT_MODE_OFF
-                
-                // Add error listener
-                onError?.let { errorCallback ->
-                    addListener(object : Player.Listener {
-                        override fun onPlayerError(error: PlaybackException) {
-                            Log.e(TAG, "Player error: ${error.message}", error)
-                            errorCallback(error)
-                        }
-                    })
+        try {
+            // Low-latency load control configuration
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    MIN_BUFFER_MS,
+                    MAX_BUFFER_MS,
+                    BUFFER_FOR_PLAYBACK_MS,
+                    BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+                )
+                .build()
+            
+            val mediaSource = createMediaSource(streamUri)
+            
+            val player = ExoPlayer.Builder(context)
+                .setLoadControl(loadControl)
+                .build()
+                .apply {
+                    setMediaSource(mediaSource)
+                    playWhenReady = true
+                    repeatMode = Player.REPEAT_MODE_OFF
+                    
+                    // Add error listener
+                    onError?.let { errorCallback ->
+                        addListener(object : Player.Listener {
+                            override fun onPlayerError(error: PlaybackException) {
+                                Log.e(TAG, "Player error: ${error.message}", error)
+                                errorCallback(error)
+                            }
+                        })
+                    }
                 }
-            }
-        
-        return player
+            
+            return player
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating player", e)
+            throw e
+        }
     }
     
     /**
@@ -125,35 +128,40 @@ class RtspPlayerManager @Inject constructor(
     ): ExoPlayer {
         Log.d(TAG, "Creating grid player for: $streamUri")
         
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                300,   // Even smaller buffer for grid
-                1500,
-                300,
-                500
-            )
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
-        
-        val mediaSource = createMediaSource(streamUri)
-        
-        return ExoPlayer.Builder(context)
-            .setLoadControl(loadControl)
-            .build()
-            .apply {
-                setMediaSource(mediaSource)
-                playWhenReady = true
-                volume = 0f  // Mute in grid view
-                
-                onError?.let { errorCallback ->
-                    addListener(object : Player.Listener {
-                        override fun onPlayerError(error: PlaybackException) {
-                            Log.e(TAG, "Grid player error: ${error.message}", error)
-                            errorCallback(error)
-                        }
-                    })
+        try {
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    300,   // Even smaller buffer for grid
+                    1500,
+                    300,
+                    500
+                )
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+            
+            val mediaSource = createMediaSource(streamUri)
+            
+            return ExoPlayer.Builder(context)
+                .setLoadControl(loadControl)
+                .build()
+                .apply {
+                    setMediaSource(mediaSource)
+                    playWhenReady = true
+                    volume = 0f  // Mute in grid view
+                    
+                    onError?.let { errorCallback ->
+                        addListener(object : Player.Listener {
+                            override fun onPlayerError(error: PlaybackException) {
+                                Log.e(TAG, "Grid player error: ${error.message}", error)
+                                errorCallback(error)
+                            }
+                        })
+                    }
                 }
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating grid player", e)
+            throw e
+        }
     }
     
     /**
@@ -167,33 +175,38 @@ class RtspPlayerManager @Inject constructor(
     ): ExoPlayer {
         Log.d(TAG, "Creating fullscreen player for: $streamUri")
         
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                1000,
-                5000,
-                1000,
-                2000
-            )
-            .build()
-        
-        val mediaSource = createMediaSource(streamUri)
-        
-        return ExoPlayer.Builder(context)
-            .setLoadControl(loadControl)
-            .build()
-            .apply {
-                setMediaSource(mediaSource)
-                playWhenReady = true
-                
-                onError?.let { errorCallback ->
-                    addListener(object : Player.Listener {
-                        override fun onPlayerError(error: PlaybackException) {
-                            Log.e(TAG, "Fullscreen player error: ${error.message}", error)
-                            errorCallback(error)
-                        }
-                    })
+        try {
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    1000,
+                    5000,
+                    1000,
+                    2000
+                )
+                .build()
+            
+            val mediaSource = createMediaSource(streamUri)
+            
+            return ExoPlayer.Builder(context)
+                .setLoadControl(loadControl)
+                .build()
+                .apply {
+                    setMediaSource(mediaSource)
+                    playWhenReady = true
+                    
+                    onError?.let { errorCallback ->
+                        addListener(object : Player.Listener {
+                            override fun onPlayerError(error: PlaybackException) {
+                                Log.e(TAG, "Fullscreen player error: ${error.message}", error)
+                                errorCallback(error)
+                            }
+                        })
+                    }
                 }
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating fullscreen player", e)
+            throw e
+        }
     }
     
     /**

@@ -79,8 +79,9 @@ fun CameraCell(
                             player = playerManager.createGridPlayer(camera.streamUri)
                             player?.prepare()
                             isPlaying = true
-                        } catch (e: Exception) {
-                            // Failed to create player, ignore
+                        } catch (t: Throwable) {
+                            // Failed to create player, log and ignore to prevent crash
+                            t.printStackTrace()
                             player = null
                             isPlaying = false
                         }
@@ -104,8 +105,9 @@ fun CameraCell(
                 player = playerManager.createGridPlayer(camera.streamUri)
                 player?.prepare()
                 isPlaying = true
-            } catch (e: Exception) {
-                // Failed to create player, ignore
+            } catch (t: Throwable) {
+                // Failed to create player, log and ignore to prevent crash
+                t.printStackTrace()
                 player = null
                 isPlaying = false
             }

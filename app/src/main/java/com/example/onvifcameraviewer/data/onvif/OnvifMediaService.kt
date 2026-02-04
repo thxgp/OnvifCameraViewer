@@ -1,5 +1,5 @@
-package com.example.onvifcameraviewer.data.onvif
-
+import com.burgstaller.okhttp.digest.DigestAuthenticator
+import com.burgstaller.okhttp.digest.Credentials as DigestCredentials
 import com.example.onvifcameraviewer.domain.model.Credentials
 import com.example.onvifcameraviewer.domain.model.MediaProfile
 import com.example.onvifcameraviewer.domain.model.VideoEncoderConfig
@@ -69,7 +69,7 @@ class OnvifMediaService @Inject constructor() {
                     try {
                         Log.d("OnvifMediaService", "getProfiles: Attempting time sync...")
                         // Get server time
-                        val timeOffset = calculateTimeOffset(deviceUrl)
+                        val timeOffset = calculateTimeOffset(deviceUrl, credentials)
                         Log.d("OnvifMediaService", "getProfiles: Time offset calculated: ${timeOffset}ms")
                         
                         // Retry with corrected time
@@ -88,13 +88,30 @@ class OnvifMediaService @Inject constructor() {
         }
     }
 
-    // ... (fetchProfilesWithOffset remains same) ...
+    // Helper to fetch profiles with a specific time offset
+    private fun fetchProfilesWithOffset(
+        mediaUrl: String, 
+        credentials: Credentials, 
+        offset: Long
+    ): Result<List<MediaProfile>> {
+        val auth = OnvifAuth.generateAuthComponents(
+            credentials.username, 
+            credentials.password,
+            offset
+        )
+        
+        val soapRequest = buildGetProfilesRequest(auth)
+        val response = executeSoapRequest(mediaUrl, soapRequest, credentials)
+        
+        val profiles = parseProfilesResponse(response)
+        return Result.success(profiles)
+    }
 
     /**
      * Calculates time offset between device and local clock.
      * Offset = DeviceTime - LocalTime
      */
-    private fun calculateTimeOffset(deviceUrl: String): Long {
+    private fun calculateTimeOffset(deviceUrl: String, credentials: Credentials? = null): Long {
         Log.d("OnvifMediaService", "calculateTimeOffset: Requesting cached system time from $deviceUrl")
         
         val soapRequest = """<?xml version="1.0" encoding="UTF-8"?>
@@ -107,7 +124,7 @@ class OnvifMediaService @Inject constructor() {
 
         // NOTE: calculateTimeOffset sends request to Device Service (base URL/XAddr), NOT Media Service
         // This is correct as per ONVIF Core Spec
-        val response = executeSoapRequest(deviceUrl, soapRequest)
+        val response = executeSoapRequest(deviceUrl, soapRequest, credentials)
         Log.d("OnvifMediaService", "calculateTimeOffset: Response: $response")
         return parseSystemDateAndTime(response)
     }
@@ -166,7 +183,7 @@ class OnvifMediaService @Inject constructor() {
             } catch (e: Exception) {
                  val errorMsg = e.message ?: ""
                 if (errorMsg.contains("401") || errorMsg.contains("Failed")) {
-                     val timeOffset = calculateTimeOffset(deviceUrl)
+                     val timeOffset = calculateTimeOffset(deviceUrl, credentials)
                      return@withContext fetchStreamUriWithOffset(mediaUrl, credentials, profileToken, useUdp, timeOffset)
                 }
                 throw e
@@ -191,7 +208,7 @@ class OnvifMediaService @Inject constructor() {
         
         val transportProtocol = if (useUdp) "UDP" else "TCP" 
         val soapRequest = buildGetStreamUriRequest(auth, profileToken, transportProtocol)
-        val response = executeSoapRequest(mediaUrl, soapRequest) // executeSoapRequest handles non-200 by throwing
+        val response = executeSoapRequest(mediaUrl, soapRequest, credentials) // executeSoapRequest handles non-200 by throwing
         
         val uri = parseStreamUriResponse(response)
             ?: throw Exception("Failed to parse stream URI")
@@ -213,15 +230,26 @@ class OnvifMediaService @Inject constructor() {
     /**
      * Executes a SOAP request and returns the response body.
      */
-    private fun executeSoapRequest(url: String, soapBody: String): String {
+    private fun executeSoapRequest(url: String, soapBody: String, credentials: Credentials? = null): String {
         val requestBody = soapBody.toRequestBody(SOAP_CONTENT_TYPE.toMediaType())
+        
+        // Configure Digest Auth if credentials provided
+        val clientToUse = if (credentials != null) {
+            val authenticator = DigestAuthenticator(DigestCredentials(credentials.username, credentials.password))
+            httpClient.newBuilder()
+                .authenticator(authenticator)
+                .build()
+        } else {
+            httpClient
+        }
+
         val request = Request.Builder()
             .url(url)
             .post(requestBody)
             .addHeader("Content-Type", SOAP_CONTENT_TYPE)
             .build()
         
-        val response = httpClient.newCall(request).execute()
+        val response = clientToUse.newCall(request).execute()
         if (!response.isSuccessful) {
             // Read error body for debugging
             val errorBody = response.body?.string() ?: ""

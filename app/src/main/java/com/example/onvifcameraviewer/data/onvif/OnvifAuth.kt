@@ -25,11 +25,16 @@ object OnvifAuth {
      * 
      * @param username The camera username
      * @param password The camera password
+     * @param timeOffsetMillis Offset to add to local time (ServerTime - LocalTime)
      * @return Triple of (Base64 Nonce, Created timestamp, PasswordDigest)
      */
-    fun generateAuthComponents(username: String, password: String): AuthComponents {
+    fun generateAuthComponents(
+        username: String, 
+        password: String,
+        timeOffsetMillis: Long = 0
+    ): AuthComponents {
         val nonce = generateNonce()
-        val created = generateCreatedTimestamp()
+        val created = generateCreatedTimestamp(timeOffsetMillis)
         val digest = createPasswordDigest(password, nonce, created)
         
         return AuthComponents(
@@ -67,10 +72,11 @@ object OnvifAuth {
      * Generates the Created timestamp in ISO 8601 format (UTC).
      * Example: 2024-01-15T10:30:00Z
      */
-    private fun generateCreatedTimestamp(): String {
+    private fun generateCreatedTimestamp(offsetMillis: Long): String {
         val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         dateFormat.timeZone = TimeZone.getTimeZone("UTC")
-        return dateFormat.format(Date())
+        val now = Date(System.currentTimeMillis() + offsetMillis)
+        return dateFormat.format(now)
     }
     
     /**

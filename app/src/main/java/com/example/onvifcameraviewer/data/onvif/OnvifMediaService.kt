@@ -39,24 +39,116 @@ class OnvifMediaService @Inject constructor() {
      * @param credentials Camera login credentials
      * @return List of MediaProfile objects
      */
+    /**
+     * Retrieves available media profiles from the device.
+     * Automatically handles clock skew by syncing with server time if initial auth fails.
+     * 
+     * @param deviceUrl The ONVIF service URL (XAddrs)
+     * @param credentials Camera login credentials
+     * @return List of MediaProfile objects
+     */
     suspend fun getProfiles(
         deviceUrl: String,
         credentials: Credentials
     ): Result<List<MediaProfile>> = withContext(Dispatchers.IO) {
         try {
             val mediaUrl = getMediaServiceUrl(deviceUrl)
-            val auth = OnvifAuth.generateAuthComponents(credentials.username, credentials.password)
             
-            val soapRequest = buildGetProfilesRequest(auth)
-            val response = executeSoapRequest(mediaUrl, soapRequest)
-            
-            val profiles = parseProfilesResponse(response)
-            Result.success(profiles)
+            // First attempt with local time
+            try {
+                return@withContext fetchProfilesWithOffset(mediaUrl, credentials, 0)
+            } catch (e: Exception) {
+                // If auth failed (401 or SOAP Fault), try to sync time
+                val errorMsg = e.message ?: ""
+                if (errorMsg.contains("401") || errorMsg.contains("Failed") || errorMsg.contains("500")) {
+                    try {
+                        // Get server time
+                        val timeOffset = calculateTimeOffset(deviceUrl)
+                        // Retry with corrected time
+                        return@withContext fetchProfilesWithOffset(mediaUrl, credentials, timeOffset)
+                    } catch (syncError: Exception) {
+                        // If sync fails, throw original error
+                        throw e
+                    }
+                }
+                throw e
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
     
+    // Helper to fetch profiles with a specific time offset
+    private fun fetchProfilesWithOffset(
+        mediaUrl: String, 
+        credentials: Credentials, 
+        offset: Long
+    ): Result<List<MediaProfile>> {
+        val auth = OnvifAuth.generateAuthComponents(
+            credentials.username, 
+            credentials.password,
+            offset
+        )
+        
+        val soapRequest = buildGetProfilesRequest(auth)
+        val response = executeSoapRequest(mediaUrl, soapRequest)
+        
+        val profiles = parseProfilesResponse(response)
+        return Result.success(profiles)
+    }
+
+    /**
+     * Calculates time offset between device and local clock.
+     * Offset = DeviceTime - LocalTime
+     */
+    private fun calculateTimeOffset(deviceUrl: String): Long {
+        // Use device_service URL directly, usually available at the base URL or specified XAddr
+        // But for GetSystemDateAndTime we should send to Device Service, NOT Media Service.
+        // Assuming deviceUrl passed here IS the Device Service URL (XAddrs) 
+        // If it was modified to be media service, we might need the original.
+        // In this architecture, usually 'deviceUrl' passed to getProfiles comes from discovery XAddrs (Device Service).
+        
+        val soapRequest = """<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+               xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+    <soap:Body>
+        <tds:GetSystemDateAndTime/>
+    </soap:Body>
+</soap:Envelope>"""
+
+        val response = executeSoapRequest(deviceUrl, soapRequest)
+        return parseSystemDateAndTime(response)
+    }
+
+    private fun parseSystemDateAndTime(response: String): Long {
+        // Extract UTC DateTime
+        // <tt:UTCDateTime>
+        //    <tt:Time> <tt:Hour>15</tt:Hour> <tt:Minute>30</tt:Minute> <tt:Second>45</tt:Second> </tt:Time>
+        //    <tt:Date> <tt:Year>2024</tt:Year> <tt:Month>2</tt:Month> <tt:Day>4</tt:Day> </tt:Date>
+        // </tt:UTCDateTime>
+        
+        val yearPattern = Regex("""<[^:]*:?Year>(\d+)</[^:]*:?Year>""")
+        val monthPattern = Regex("""<[^:]*:?Month>(\d+)</[^:]*:?Month>""")
+        val dayPattern = Regex("""<[^:]*:?Day>(\d+)</[^:]*:?Day>""")
+        val hourPattern = Regex("""<[^:]*:?Hour>(\d+)</[^:]*:?Hour>""")
+        val minutePattern = Regex("""<[^:]*:?Minute>(\d+)</[^:]*:?Minute>""")
+        val secondPattern = Regex("""<[^:]*:?Second>(\d+)</[^:]*:?Second>""")
+
+        val year = yearPattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
+        val month = monthPattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
+        val day = dayPattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
+        val hour = hourPattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
+        val minute = minutePattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
+        val second = secondPattern.find(response)?.groupValues?.get(1)?.toInt() ?: return 0
+
+        val calendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
+        calendar.set(year, month - 1, day, hour, minute, second)
+        val serverTime = calendar.timeInMillis
+        val localTime = System.currentTimeMillis()
+        
+        return serverTime - localTime
+    }
+
     /**
      * Retrieves the RTSP stream URI for a specific profile.
      * 
@@ -74,23 +166,50 @@ class OnvifMediaService @Inject constructor() {
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val mediaUrl = getMediaServiceUrl(deviceUrl)
-            val auth = OnvifAuth.generateAuthComponents(credentials.username, credentials.password)
             
-            val transportProtocol = if (useUdp) "UDP" else "TCP" 
-            val soapRequest = buildGetStreamUriRequest(auth, profileToken, transportProtocol)
-            val response = executeSoapRequest(mediaUrl, soapRequest)
-            
-            val uri = parseStreamUriResponse(response)
-                ?: return@withContext Result.failure(Exception("Failed to parse stream URI"))
-            
-            // Embed credentials in RTSP URI for authentication
-            val authenticatedUri = embedCredentialsInUri(uri, credentials)
-            Result.success(authenticatedUri)
+            // Ideally we should cache the offset, but for now let's just use 0 
+            // If getProfiles succeeded, it implies 0 offset was fine OR we don't persist offset yet.
+            // Improve: Pass offset or recalculate if fails. For simplicity, retry logic here too.
+             try {
+                return@withContext fetchStreamUriWithOffset(mediaUrl, credentials, profileToken, useUdp, 0)
+            } catch (e: Exception) {
+                 val errorMsg = e.message ?: ""
+                if (errorMsg.contains("401") || errorMsg.contains("Failed")) {
+                     val timeOffset = calculateTimeOffset(deviceUrl)
+                     return@withContext fetchStreamUriWithOffset(mediaUrl, credentials, profileToken, useUdp, timeOffset)
+                }
+                throw e
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
-    
+
+    private fun fetchStreamUriWithOffset(
+        mediaUrl: String,
+        credentials: Credentials,
+        profileToken: String,
+        useUdp: Boolean,
+        offset: Long
+    ): Result<String> {
+        val auth = OnvifAuth.generateAuthComponents(
+            credentials.username, 
+            credentials.password,
+            offset
+        )
+        
+        val transportProtocol = if (useUdp) "UDP" else "TCP" 
+        val soapRequest = buildGetStreamUriRequest(auth, profileToken, transportProtocol)
+        val response = executeSoapRequest(mediaUrl, soapRequest) // executeSoapRequest handles non-200 by throwing
+        
+        val uri = parseStreamUriResponse(response)
+            ?: throw Exception("Failed to parse stream URI")
+        
+        // Embed credentials in RTSP URI for authentication
+        val authenticatedUri = embedCredentialsInUri(uri, credentials)
+        return Result.success(authenticatedUri)
+    }
+
     /**
      * Converts device service URL to media service URL.
      */
@@ -113,7 +232,9 @@ class OnvifMediaService @Inject constructor() {
         
         val response = httpClient.newCall(request).execute()
         if (!response.isSuccessful) {
-            throw Exception("SOAP request failed: ${response.code}")
+            // Read error body for debugging
+            val errorBody = response.body?.string() ?: ""
+            throw Exception("SOAP request failed: ${response.code} $errorBody")
         }
         return response.body?.string() ?: throw Exception("Empty response")
     }

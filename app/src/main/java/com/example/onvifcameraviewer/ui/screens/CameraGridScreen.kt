@@ -156,15 +156,13 @@ fun CameraGridScreen(
                             camera = camera,
                             playerManager = viewModel.playerManager,
                             onTap = {
-                                // Allow auth dialog if:
-                                // 1. Manual camera with empty URL (needs config)
-                                // 2. ONVIF camera needs credentials
-                                // 3. Connection failed (ERROR state) - allows retry!
-                                val isManual = camera.device.serviceUrl.isEmpty()
+                                val isOnvif = camera.device.serviceUrl.isNotEmpty()
                                 val needsAuth = camera.credentials == null
                                 val hasError = camera.connectionState == ConnectionState.ERROR
                                 
-                                if ((isManual && !hasError) || needsAuth || hasError) {
+                                // Only show auth dialog for ONVIF cameras that need credentials
+                                // or when any camera has a connection error (to allow retry)
+                                if ((isOnvif && needsAuth) || hasError) {
                                     viewModel.requestAuthentication(camera.id)
                                 }
                             },

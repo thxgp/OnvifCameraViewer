@@ -1,9 +1,11 @@
 package com.example.onvifcameraviewer.ui.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.onvifcameraviewer.data.player.RtspPlayerManager
 import com.example.onvifcameraviewer.data.repository.CameraRepository
+import com.example.onvifcameraviewer.domain.exception.OnvifException
 import com.example.onvifcameraviewer.domain.model.CameraUiState
 import com.example.onvifcameraviewer.domain.model.ConnectionState
 import com.example.onvifcameraviewer.domain.model.Credentials
@@ -40,6 +42,42 @@ class CameraViewModel @Inject constructor(
     
     private val _uiState = MutableStateFlow(MainScreenState())
     val uiState: StateFlow<MainScreenState> = _uiState.asStateFlow()
+    
+    companion object {
+        private const val TAG = "CameraViewModel"
+    }
+    
+    init {
+        loadSavedCameras()
+    }
+    
+    /**
+     * Loads saved cameras from the database.
+     */
+    private fun loadSavedCameras() {
+        viewModelScope.launch {
+            try {
+                cameraRepository.getSavedCameras().collect { savedCameras ->
+                    val cameraStates = savedCameras.map { saved ->
+                        CameraUiState(
+                            id = saved.id,
+                            device = saved.device,
+                            credentials = saved.credentials,
+                            streamUri = saved.streamUri,
+                            connectionState = if (saved.streamUri != null) 
+                                ConnectionState.STREAMING 
+                            else 
+                                ConnectionState.DISCONNECTED
+                        )
+                    }
+                    _uiState.update { it.copy(cameras = cameraStates) }
+                    Log.d(TAG, "Loaded ${cameraStates.size} saved cameras")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading saved cameras", e)
+            }
+        }
+    }
     
     /**
      * Starts scanning for ONVIF cameras on the network.
@@ -150,10 +188,18 @@ class CameraViewModel @Inject constructor(
                     ) 
                 }
             } catch (e: Exception) {
+                val userMessage = when (e) {
+                    is OnvifException.AuthenticationException -> "Wrong username or password"
+                    is OnvifException.NetworkException -> e.message ?: "Network error"
+                    is OnvifException.NoProfilesException -> "Camera has no streaming profiles"
+                    is OnvifException.TimeoutException -> "Connection timed out - check camera IP"
+                    is OnvifException.StreamUriException -> "Failed to get stream URL"
+                    else -> e.message ?: "Connection failed"
+                }
                 updateCameraState(cameraId) { 
                     it.copy(
                         connectionState = ConnectionState.ERROR,
-                        errorMessage = e.message ?: "Connection failed"
+                        errorMessage = userMessage
                     ) 
                 }
             }
@@ -195,13 +241,12 @@ class CameraViewModel @Inject constructor(
         val id = "manual_${System.currentTimeMillis()}"
         val ipAddress = OnvifDevice.extractIpFromUrl(streamUrl).ifEmpty { "Unknown" }
         
-        // Create a placeholder OnvifDevice for manual cameras
         val device = OnvifDevice(
             id = id,
             name = name,
             manufacturer = "Manual",
             model = "",
-            serviceUrl = "",  // No ONVIF service for manual cameras
+            serviceUrl = "",
             ipAddress = ipAddress
         )
         
@@ -224,6 +269,23 @@ class CameraViewModel @Inject constructor(
                 cameras = state.cameras + cameraState,
                 showManualAddDialog = false
             )
+        }
+        
+        // Save to database
+        viewModelScope.launch {
+            try {
+                cameraRepository.saveCamera(
+                    id = id,
+                    name = name,
+                    streamUri = streamUrl,
+                    device = device,
+                    credentials = credentials,
+                    isManual = true
+                )
+                Log.d(TAG, "Saved manual camera: $name")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving camera", e)
+            }
         }
     }
     

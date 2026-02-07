@@ -1,6 +1,8 @@
 package com.example.onvifcameraviewer.di
 
 import android.content.Context
+import com.example.onvifcameraviewer.data.local.AppDatabase
+import com.example.onvifcameraviewer.data.local.CameraDao
 import com.example.onvifcameraviewer.data.player.RtspPlayerManager
 import dagger.Module
 import dagger.Provides
@@ -12,7 +14,6 @@ import javax.inject.Singleton
 /**
  * Hilt dependency injection module.
  * Provides singleton instances for classes that cannot use constructor injection.
- * (e.g., classes requiring Context or third-party libraries).
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -25,4 +26,19 @@ object AppModule {
     ): RtspPlayerManager {
         return RtspPlayerManager(context)
     }
+    
+    @Provides
+    @Singleton
+    fun provideAppDatabase(
+        @ApplicationContext context: Context
+    ): AppDatabase {
+        return AppDatabase.getInstance(context)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideCameraDao(database: AppDatabase): CameraDao {
+        return database.cameraDao()
+    }
 }
+

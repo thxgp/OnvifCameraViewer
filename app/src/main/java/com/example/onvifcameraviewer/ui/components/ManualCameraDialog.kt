@@ -57,8 +57,12 @@ fun ManualCameraDialog(
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     
-    val isValid = name.isNotBlank() && streamUrl.isNotBlank() && 
-        (streamUrl.startsWith("http://") || streamUrl.startsWith("rtsp://"))
+    // More lenient validation - just needs name and some URL content
+    val hasValidProtocol = streamUrl.startsWith("http://") || 
+        streamUrl.startsWith("https://") || 
+        streamUrl.startsWith("rtsp://")
+    val isValid = name.isNotBlank() && streamUrl.isNotBlank()
+    val showUrlHint = streamUrl.isNotBlank() && !hasValidProtocol
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -95,12 +99,21 @@ fun ManualCameraDialog(
                     label = { Text(stringResource(R.string.stream_url)) },
                     placeholder = { Text("rtsp://192.168.1.100:554/stream") },
                     singleLine = true,
+                    isError = showUrlHint,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     supportingText = {
-                        Text(
-                            text = stringResource(R.string.stream_url_hint),
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        if (showUrlHint) {
+                            Text(
+                                text = "URL should start with rtsp://, http://, or https://",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            Text(
+                                text = stringResource(R.string.stream_url_hint),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     },
                     modifier = Modifier.fillMaxWidth()
                 )

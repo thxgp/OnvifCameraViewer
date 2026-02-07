@@ -1,6 +1,7 @@
 package com.example.onvifcameraviewer.data.onvif
 
 import android.util.Base64
+import com.example.onvifcameraviewer.domain.exception.OnvifException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
@@ -26,8 +27,10 @@ object OnvifAuth {
      * @param username The camera username
      * @param password The camera password
      * @param timeOffsetMillis Offset to add to local time (ServerTime - LocalTime)
-     * @return Triple of (Base64 Nonce, Created timestamp, PasswordDigest)
+     * @return AuthComponents containing nonce, created timestamp, and password digest
+     * @throws OnvifException.AuthenticationException if digest creation fails
      */
+    @Throws(OnvifException.AuthenticationException::class)
     fun generateAuthComponents(
         username: String, 
         password: String,
@@ -48,15 +51,22 @@ object OnvifAuth {
     /**
      * Creates the PasswordDigest for WS-UsernameToken.
      * Formula: Base64(SHA-1(Nonce + Created + Password))
+     * 
+     * @throws OnvifException.AuthenticationException if SHA-1 algorithm is unavailable
      */
+    @Throws(OnvifException.AuthenticationException::class)
     private fun createPasswordDigest(
         password: String,
         nonce: ByteArray,
         created: String
     ): String {
-        val combined = nonce + created.toByteArray(Charsets.UTF_8) + password.toByteArray(Charsets.UTF_8)
-        val sha1 = MessageDigest.getInstance("SHA-1").digest(combined)
-        return Base64.encodeToString(sha1, Base64.NO_WRAP)
+        return try {
+            val combined = nonce + created.toByteArray(Charsets.UTF_8) + password.toByteArray(Charsets.UTF_8)
+            val sha1 = MessageDigest.getInstance("SHA-1").digest(combined)
+            Base64.encodeToString(sha1, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            throw OnvifException.AuthenticationException("Failed to create password digest", e)
+        }
     }
     
     /**

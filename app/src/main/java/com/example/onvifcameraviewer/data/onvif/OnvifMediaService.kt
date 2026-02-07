@@ -1,17 +1,19 @@
 package com.example.onvifcameraviewer.data.onvif
 
+import android.util.Log
 import com.burgstaller.okhttp.digest.DigestAuthenticator
 import com.burgstaller.okhttp.digest.Credentials as DigestCredentials
+import com.example.onvifcameraviewer.domain.exception.OnvifException
 import com.example.onvifcameraviewer.domain.model.Credentials
 import com.example.onvifcameraviewer.domain.model.MediaProfile
 import com.example.onvifcameraviewer.domain.model.VideoEncoderConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -56,8 +58,10 @@ class OnvifMediaService @Inject constructor() {
             try {
                 return@withContext fetchProfilesWithOffset(mediaUrl, credentials, 0)
             } catch (e: Exception) {
-                val errorMsg = e.message ?: ""
-                if (errorMsg.contains("401") || errorMsg.contains("Failed") || errorMsg.contains("500")) {
+                // Retry with time sync for auth failures
+                if (e is OnvifException.AuthenticationException || 
+                    e.message?.contains("401") == true ||
+                    e.message?.contains("Authentication") == true) {
                     Log.d(TAG, "Auth failed, syncing time...")
                     val timeOffset = calculateTimeOffset(deviceUrl, credentials)
                     return@withContext fetchProfilesWithOffset(mediaUrl, credentials, timeOffset)
@@ -213,7 +217,7 @@ class OnvifMediaService @Inject constructor() {
         val response = executeSoapRequest(mediaUrl, soapRequest, credentials) 
         
         val uri = parseStreamUriResponse(response)
-            ?: throw Exception("Failed to parse stream URI")
+            ?: throw OnvifException.StreamUriException("Failed to parse stream URI from SOAP response")
         
         // Clean up URI and embed credentials safely
         val cleanUri = uri.trim().replace(Regex("^rtsp:///+"), "rtsp://")
@@ -245,11 +249,30 @@ class OnvifMediaService @Inject constructor() {
                 .addHeader("Content-Type", SOAP_CONTENT_TYPE)
                 .build()
             
-            val response = clientToUse.newCall(request).execute()
+            val response = try {
+                clientToUse.newCall(request).execute()
+            } catch (e: SocketTimeoutException) {
+                throw OnvifException.TimeoutException("Connection timed out - check camera IP")
+            } catch (e: java.net.ConnectException) {
+                throw OnvifException.NetworkException("Cannot connect to camera - check network")
+            }
+            
             val responseBody = response.body?.string() ?: ""
             
             if (!response.isSuccessful) {
-                throw Exception("SOAP request failed: ${response.code} $responseBody")
+                val errorMessage = when (response.code) {
+                    401 -> "Authentication failed - check username/password"
+                    403 -> "Access forbidden - insufficient permissions"
+                    404 -> "Service not found at this URL"
+                    500 -> "Camera internal error"
+                    503 -> "Camera service unavailable"
+                    else -> "Request failed: ${response.code}"
+                }
+                when {
+                    response.code == 401 -> throw OnvifException.AuthenticationException(errorMessage)
+                    response.code in 500..599 -> throw OnvifException.NetworkException("$errorMessage: $responseBody")
+                    else -> throw OnvifException.NetworkException(errorMessage)
+                }
             }
             responseBody
         }

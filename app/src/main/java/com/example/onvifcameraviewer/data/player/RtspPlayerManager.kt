@@ -36,7 +36,7 @@ class RtspPlayerManager @Inject constructor(
     
     /**
      * Creates a media source based on the URI scheme.
-     * Configured for low-latency live streaming.
+     * Configured for ultra-low-latency live streaming.
      */
     @OptIn(UnstableApi::class)
     private fun createMediaSource(uri: String): MediaSource {
@@ -44,9 +44,11 @@ class RtspPlayerManager @Inject constructor(
             .setUri(uri)
             .setLiveConfiguration(
                 MediaItem.LiveConfiguration.Builder()
-                    .setMaxPlaybackSpeed(1.04f)  // Catch up faster
-                    .setMinPlaybackSpeed(0.96f)
-                    .setTargetOffsetMs(500)  // Reduced from 1000 for lower latency
+                    .setMaxPlaybackSpeed(1.02f)
+                    .setMinPlaybackSpeed(0.98f)
+                    .setTargetOffsetMs(100)  // Ultra-low latency target
+                    .setMinOffsetMs(50)
+                    .setMaxOffsetMs(500)
                     .build()
             )
             .build()
@@ -55,6 +57,7 @@ class RtspPlayerManager @Inject constructor(
             RtspMediaSource.Factory()
                 .setForceUseRtpTcp(true)  // Essential for stability on many networks
                 .setDebugLoggingEnabled(false)
+                .setTimeoutMs(5000)  // Faster timeout
                 .createMediaSource(mediaItem)
         } else {
             val dataSourceFactory = DefaultDataSource.Factory(context)
@@ -75,13 +78,13 @@ class RtspPlayerManager @Inject constructor(
         Log.d(TAG, "Creating grid player for: $streamUri")
         
         return try {
-            // Ultra-low latency buffering for grid view
+            // Low-latency buffering for grid view
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    250,   // Min buffer before playback
-                    1000,  // Max buffer 
-                    100,   // Buffer for playback (reduced)
-                    250    // Buffer for rebuffer (reduced)
+                    1000,  // Min buffer (must be >= bufferForPlaybackAfterRebufferMs)
+                    3000,  // Max buffer
+                    500,   // Buffer for playback
+                    1000   // Buffer for rebuffer
                 )
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
@@ -116,13 +119,13 @@ class RtspPlayerManager @Inject constructor(
         Log.d(TAG, "Creating fullscreen player for: $streamUri")
         
         return try {
-            // Low-latency buffering for fullscreen - slightly more than grid for stability
+            // Buffering for fullscreen - balanced for stability
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    500,   // Min buffer before playback
-                    2000,  // Max buffer
-                    200,   // Buffer for playback
-                    500    // Buffer for rebuffer
+                    1500,  // Min buffer (must be >= bufferForPlaybackAfterRebufferMs)
+                    5000,  // Max buffer
+                    750,   // Buffer for playback
+                    1500   // Buffer for rebuffer
                 )
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()

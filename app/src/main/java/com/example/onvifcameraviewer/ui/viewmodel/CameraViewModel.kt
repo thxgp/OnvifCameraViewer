@@ -26,6 +26,7 @@ data class MainScreenState(
     val isScanning: Boolean = false,
     val showAuthDialog: Boolean = false,
     val showManualAddDialog: Boolean = false,
+    val showDeleteDialog: Boolean = false,
     val selectedCameraId: String? = null,
     val errorMessage: String? = null
 )
@@ -187,6 +188,21 @@ class CameraViewModel @Inject constructor(
                         connectionState = ConnectionState.STREAMING
                     ) 
                 }
+                
+                // Save camera to database for persistence
+                try {
+                    cameraRepository.saveCamera(
+                        id = cameraId,
+                        name = camera.device.name,
+                        streamUri = streamUri,
+                        device = camera.device,
+                        credentials = credentials,
+                        isManual = false
+                    )
+                    Log.d(TAG, "Saved camera to database: ${camera.device.name}")
+                } catch (saveError: Exception) {
+                    Log.e(TAG, "Failed to save camera to database", saveError)
+                }
             } catch (e: Exception) {
                 val userMessage = when (e) {
                     is OnvifException.AuthenticationException -> "Wrong username or password"
@@ -294,6 +310,51 @@ class CameraViewModel @Inject constructor(
      */
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+    
+    /**
+     * Shows the delete confirmation dialog for a camera.
+     */
+    fun showDeleteDialog(cameraId: String) {
+        _uiState.update { 
+            it.copy(showDeleteDialog = true, selectedCameraId = cameraId) 
+        }
+    }
+    
+    /**
+     * Dismisses the delete confirmation dialog.
+     */
+    fun dismissDeleteDialog() {
+        _uiState.update { 
+            it.copy(showDeleteDialog = false, selectedCameraId = null) 
+        }
+    }
+    
+    /**
+     * Deletes a camera from both UI state and database.
+     */
+    fun deleteCamera(cameraId: String) {
+        viewModelScope.launch {
+            try {
+                // Remove from database
+                cameraRepository.deleteCamera(cameraId)
+                
+                // Remove from UI state
+                _uiState.update { state ->
+                    state.copy(
+                        cameras = state.cameras.filter { it.id != cameraId },
+                        showDeleteDialog = false,
+                        selectedCameraId = null
+                    )
+                }
+                Log.d(TAG, "Deleted camera: $cameraId")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error deleting camera", e)
+                _uiState.update { 
+                    it.copy(errorMessage = "Failed to delete camera: ${e.message}") 
+                }
+            }
+        }
     }
     
     /**

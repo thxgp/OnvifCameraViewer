@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -28,6 +29,7 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -166,7 +168,8 @@ fun CameraGridScreen(
                                     viewModel.requestAuthentication(camera.id)
                                 }
                             },
-                            onFullscreen = { onCameraFullscreen(camera.id) }
+                            onFullscreen = { onCameraFullscreen(camera.id) },
+                            onDelete = { viewModel.showDeleteDialog(camera.id) }
                         )
                     }
                 }
@@ -201,6 +204,34 @@ fun CameraGridScreen(
                 )
             }
         )
+    }
+    
+    // Delete confirmation dialog
+    if (uiState.showDeleteDialog && uiState.selectedCameraId != null) {
+        val selectedCamera = uiState.cameras.find { it.id == uiState.selectedCameraId }
+        selectedCamera?.let { camera ->
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissDeleteDialog() },
+                title = { Text("Remove Camera") },
+                text = { 
+                    Text("Are you sure you want to remove \"${camera.device.name}\"?") 
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { viewModel.deleteCamera(camera.id) }
+                    ) {
+                        Text("Remove", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { viewModel.dismissDeleteDialog() }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
     }
 }
 

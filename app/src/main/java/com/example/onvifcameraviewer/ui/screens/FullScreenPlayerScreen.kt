@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -68,12 +69,19 @@ fun FullScreenPlayerScreen(
     LaunchedEffect(mainStreamUri) {
         val uri = mainStreamUri ?: camera.streamUri
         if (uri != null) {
-            player = playerManager.createFullscreenPlayer(uri) { playbackError ->
-                error = playbackError.message
+            // Small delay to allow grid player to fully release decoder
+            delay(300)
+            try {
+                player = playerManager.createFullscreenPlayer(uri) { playbackError ->
+                    error = playbackError.message
+                    isLoading = false
+                }
+                player?.prepare()
+                isLoading = false
+            } catch (e: Exception) {
+                error = "Failed to start player: ${e.message}"
                 isLoading = false
             }
-            player?.prepare()
-            isLoading = false
         } else {
             error = "No stream available"
             isLoading = false

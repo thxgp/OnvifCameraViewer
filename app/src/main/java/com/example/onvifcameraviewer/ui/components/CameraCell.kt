@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.PlayArrow
@@ -62,6 +63,7 @@ fun CameraCell(
     playerManager: RtspPlayerManager,
     onTap: () -> Unit,
     onFullscreen: () -> Unit,
+    onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -147,23 +149,72 @@ fun CameraCell(
                         )
                     }
                     
-                    // Fullscreen button
-                    IconButton(
-                        onClick = onFullscreen,
+                    // Top row with delete and fullscreen buttons
+                    Row(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
+                            .fillMaxWidth()
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Fullscreen,
-                            contentDescription = "Fullscreen",
-                            tint = Color.White
-                        )
+                        // Delete button
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(
+                                    Color.Black.copy(alpha = 0.5f),
+                                    CircleShape
+                                )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Remove camera",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        
+                        // Fullscreen button
+                        IconButton(
+                            onClick = onFullscreen,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(
+                                    Color.Black.copy(alpha = 0.5f),
+                                    CircleShape
+                                )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Fullscreen,
+                                contentDescription = "Fullscreen",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
                 
                 ConnectionState.DISCONNECTED -> {
                     DisconnectedOverlay(camera.device.name) { onTap() }
+                    // Delete button for disconnected cameras
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(4.dp)
+                            .size(32.dp)
+                            .background(
+                                Color.Black.copy(alpha = 0.5f),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Remove camera",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
                 
                 ConnectionState.CONNECTING,
@@ -174,6 +225,25 @@ fun CameraCell(
                 
                 ConnectionState.ERROR -> {
                     ErrorOverlay(camera.errorMessage ?: "Error") { onTap() }
+                    // Delete button for error state
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(4.dp)
+                            .size(32.dp)
+                            .background(
+                                Color.Black.copy(alpha = 0.5f),
+                                CircleShape
+                            )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Remove camera",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
             
